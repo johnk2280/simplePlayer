@@ -1,147 +1,117 @@
 import sys
-from PyQt5 import QtCore, QtGui, QtWidgets
-import qimage2ndarray
-import cv2
+from PyQt5 import QtGui, QtCore, QtWidgets
+from PyQt5.QtMultimedia import QMediaPlayer
+from PyQt5.QtMultimedia import QMediaContent
+import gui
 
 
-class OniPlayer(QtWidgets.QWidget):
-
-    def __init__(self, width=1280, height=720, fps=33):
+class OniPlayer(QtWidgets.QMainWindow, gui.Ui_MainWindow):
+    def __init__(self):
         super().__init__()
+        self.setupUi(self)
 
-        self.video = None
-        self.play = None
-        self.pause = None
+        self.depth_media_player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
+        self.color_media_player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
+        self.depth_media_player.setVideoOutput(self.video_widget_left)
+        self.color_media_player.setVideoOutput(self.video_widget_right)
+        self.depth_media_player.stateChanged.connect(self.media_state_changed)
+        self.depth_media_player.positionChanged.connect(self.position_changed)
+        self.depth_media_player.durationChanged.connect(self.set_duration)
 
-        # Инициализируем переменные для Видео
-        self.video_size = QtCore.QSize(width, height)
-        self.camera_capture = cv2.VideoCapture(cv2.CAP_DSHOW)
-        self.video_capture = cv2.VideoCapture()
-        self.fps = fps
-        self.frame_timer = QtCore.QTimer()
+        self.depth_buffer = QtCore.QBuffer()
 
-        # Вызываем функцию запуска камеры
-        self.setup_camera(fps)
+        self.play_button.setEnabled(False)
+        self.play_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaPlay))
+        self.play_button.clicked.connect(self.play_video)
 
-        # Инициализируем переменные для GUI
-        self.frame_label = QtWidgets.QLabel()
-        self.quit_button = QtWidgets.QPushButton('Quit')
-        self.play_pause_button = QtWidgets.QPushButton('Play')
-        self.stop_button = QtWidgets.QPushButton('Stop')
-        self.next_button = QtWidgets.QPushButton('Next')
-        self.prev_button = QtWidgets.QPushButton('Previous')
-        self.browse_button = QtWidgets.QPushButton('Open')
-        self.horizontal_slider = QtWidgets.QSlider(self.frame_label)
-        self.camera_video_button = QtWidgets.QPushButton('Switch to video')
-
-        self.main_layout = QtWidgets.QGridLayout()
-
-        # Вызываем фцнкцию отрисовки GUI
-        self.setup_ui()
-
-    def setup_ui(self):
-        # Главное окно
-        self.setWindowTitle('ONI Player')
-        self.setWindowIcon(QtGui.QIcon('media/player-play_114441.png'))
-        # self.show()
-
-        # Поле вывода изображения
-        self.frame_label.setFixedSize(self.video_size)
-
-        # Коннектим кнопки с функциями класса
-        self.quit_button.clicked.connect(self.close_win)
-        self.play_pause_button.clicked.connect(self.play_pause_video)
+        self.stop_button.setEnabled(False)
+        self.stop_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaStop))
         self.stop_button.clicked.connect(self.stop_video)
-        self.next_button.clicked.connect(self.get_next_video_frame)
-        self.prev_button.clicked.connect(self.get_prev_video_frame)
-        self.browse_button.clicked.connect(self.browse_folder)
-        self.camera_video_button.clicked.connect(self.switch_camera_video)
 
+        self.next_button.setEnabled(False)
+        self.next_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaSkipForward))
+        self.next_button.clicked.connect(self.get_next_frame)
 
-        # Распологаем слайдер по горизонтали
-        self.horizontal_slider.setOrientation(QtCore.Qt.Horizontal)
+        self.prev_button.setEnabled(False)
+        self.prev_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaSkipBackward))
+        self.prev_button.clicked.connect(self.get_prev_frame)
 
-        # Рисуем поля для кнопок и поля вывода изображения
-        self.main_layout.addWidget(self.frame_label, 0, 0, 1, 4)
-        self.main_layout.addWidget(self.quit_button, 6, 0, 1, 4)
-        self.main_layout.addWidget(self.stop_button, 3, 0, 1, 1)
-        self.main_layout.addWidget(self.prev_button, 3, 1, 1, 1)
-        self.main_layout.addWidget(self.play_pause_button, 3, 2, 1, 1)
-        self.main_layout.addWidget(self.next_button, 3, 3, 1, 1)
-        self.main_layout.addWidget(self.camera_video_button, 4, 0, 1, 4)
-        self.main_layout.addWidget(self.browse_button, 5, 0, 1, 4)
-        self.main_layout.addWidget(self.horizontal_slider, 1, 0, 2, 4)
+        self.open_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_DialogOpenButton))
+        self.open_button.clicked.connect(self.open_device)
 
-        self.setLayout(self.main_layout)
+        self.quit_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_DialogCancelButton))
+        self.quit_button.clicked.connect(self.quit_player)
 
-    def setup_camera(self, fps):
-        self.camera_capture.set(3, self.video_size.width())
-        self.camera_capture.set(4, self.video_size.height())
+        self.horizontalSlider.setRange(0, 0)
+        self.horizontalSlider.sliderMoved.connect(self.set_position)
+        self.horizontalSlider.sliderPressed.connect(self.play_video)
+        self.horizontalSlider.sliderReleased.connect(self.play_video)
 
-        self.frame_timer.timeout.connect(self.display_video_stream)
-        self.frame_timer.start(int(1000 // fps))
+    def open_device(self):
+        path = self.browse_folder()
+        if path:
+            self.depth_media_player.setMedia(QMediaContent(QtCore.QUrl.fromLocalFile(path)))
+            self.color_media_player.setMedia(QMediaContent(QtCore.QUrl.fromLocalFile(path)))
 
-    def display_video_stream(self):
-        if not self.video:
-            ret, frame = self.camera_capture.read()
+            self.play_button.setEnabled(True)
+            self.stop_button.setEnabled(True)
+            self.next_button.setEnabled(True)
+            self.prev_button.setEnabled(True)
+
+    def play_video(self):
+        if self.depth_media_player.state() == QMediaPlayer.PlayingState:
+            self.depth_media_player.pause()
+            self.color_media_player.pause()
         else:
-            ret, frame = self.video_capture.read()
+            self.depth_media_player.play()
+            self.color_media_player.play()
 
-        if not ret:
-            return False
+    def stop_video(self):
+        if self.depth_media_player.state() == QMediaPlayer.PlayingState \
+                or self.depth_media_player.state() == QMediaPlayer.PausedState:
+            self.depth_media_player.stop()
+            self.color_media_player.stop()
 
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Конвертация цвета в RGB
-        if not self.video:
-            frame = cv2.flip(frame, 1)  # делаем зеркальное отображение с камеры
+    def media_state_changed(self):
+        if self.depth_media_player.state() == QMediaPlayer.PlayingState:
+            self.play_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaPause))
+            self.play_button.setText('Pause')
         else:
-            frame = cv2.resize(frame, (self.video_size.width(), self.video_size.height()), interpolation=cv2.INTER_AREA)
+            self.play_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_MediaPlay))
+            self.play_button.setText('Play')
 
-        image = qimage2ndarray.array2qimage(frame)
-        self.frame_label.setPixmap(QtGui.QPixmap.fromImage(image))
+    def position_changed(self, position):
+        self.horizontalSlider.setSliderPosition(position)
 
-    def close_win(self):
-        # Добавить логику для завершения openni
+    def set_duration(self, duration):
+        self.horizontalSlider.setRange(0, duration)
+
+    def set_position(self, position):
+        self.depth_media_player.setPosition(position)
+        self.color_media_player.setPosition(position)
+
+    def get_next_frame(self):
+        if self.depth_media_player.state() == QMediaPlayer.PlayingState \
+                or self.depth_media_player.state() == QMediaPlayer.PausedState:
+            self.horizontalSlider.setSliderPosition(self.horizontalSlider.value() + 1000)
+            self.set_position(self.horizontalSlider.value())
+
+    def get_prev_frame(self):
+        if self.depth_media_player.state() == QMediaPlayer.PlayingState \
+                or self.depth_media_player.state() == QMediaPlayer.PausedState:
+            self.horizontalSlider.setSliderPosition(self.horizontalSlider.value() - 1000)
+            self.set_position(self.horizontalSlider.value())
+
+    def browse_folder(self):
+        p = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', r'C:\Users')
+        return p[0]
+
+    def quit_player(self):
         reply = QtWidgets.QMessageBox.question(self, 'Message', 'Are you sure to quit?', QtWidgets.QMessageBox.Yes |
                                                QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
 
         if reply == QtWidgets.QMessageBox.Yes:
-            cv2.destroyAllWindows()
-            self.camera_capture.release()
-            self.video_capture.release()
             self.close()
-
-    def play_pause_video(self):
-        if not self.pause:
-            self.frame_timer.stop()
-            self.play_pause_button.setText('Play')
-        else:
-            self.frame_timer.start(int(1000 // self.fps))
-            self.play_pause_button.setText('Pause')
-        self.pause = not self.pause
-
-    def switch_camera_video(self):
-        if not self.video:
-            path = self.browse_folder()
-            if len(path[0]):
-                self.video_capture.open(path[0])
-                self.camera_video_button.setText('Switch to camera')
-        else:
-            self.camera_video_button.setText('Switch to video')
-            self.video_capture.release()
-        self.video = not self.video
-
-    def stop_video(self):
-        pass
-
-    def get_next_video_frame(self):
-        pass
-
-    def get_prev_video_frame(self):
-        pass
-
-    def browse_folder(self):
-        path = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', r'C:\Users', filter='*.mp4')
-        return path
 
 
 if __name__ == '__main__':
